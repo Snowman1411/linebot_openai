@@ -25,7 +25,7 @@ handler = WebhookHandler(os.getenv('CHANNEL_SECRET'))
 # OPENAI API Key初始化設定
 openai.api_key = os.getenv('OPENAI_API_KEY')
 
-
+'''
 def GPT_response(text):
     # 接收回應
     response = openai.Completion.create(model="gpt-3.5-turbo-instruct", prompt=text, temperature=0.5, max_tokens=500)
@@ -33,6 +33,30 @@ def GPT_response(text):
     # 重組回應
     answer = response['choices'][0]['text'].replace('。','')
     return answer
+    '''
+
+#N
+def GPT_response(text):
+    retries = 3  # Retry up to 3 times
+    delay = 1    # Initial delay in seconds
+    for attempt in range(retries):
+        try:
+            response = openai.Completion.create(
+                model="gpt-3.5-turbo-instruct",
+                prompt=text,
+                temperature=0.5,
+                max_tokens=500
+            )
+            print(response)
+            # Extract and clean the response
+            answer = response['choices'][0]['text'].strip()
+            return answer
+        except openai.error.RateLimitError:
+            if attempt < retries - 1:
+                time.sleep(delay)
+                delay *= 2  # Exponential backoff
+            else:
+                raise  # Re-raise if all retries fail
 
 
 # 監聽所有來自 /callback 的 Post Request
@@ -50,7 +74,7 @@ def callback():
         abort(400)
     return 'OK'
 
-
+'''
 # 處理訊息
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
@@ -62,11 +86,35 @@ def handle_message(event):
     except:
         print(traceback.format_exc())
         line_bot_api.reply_message(event.reply_token, TextSendMessage('你所使用的OPENAI API key額度可能已經超過，請於後台Log內確認錯誤訊息'))
+        '''
+@handler.add(MessageEvent, message=TextMessage)
+def handle_message(event):
+    msg = event.message.text
+    try:
+        GPT_answer = GPT_response(msg)
+        print(GPT_answer)
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(GPT_answer))
+    except openai.error.RateLimitError:
+        line_bot_api.reply_message(event.reply_token, TextSendMessage('目前請求過多，請稍後再試！'))
+    except Exception:
+        print(traceback.format_exc())
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage('發生錯誤，請稍後再試或聯繫管理員檢查系統。')
+        )
         
 
 @handler.add(PostbackEvent)
 def handle_message(event):
     print(event.postback.data)
+    
+if not all([os.getenv('CHANNEL_ACCESS_TOKEN'), os.getenv('CHANNEL_SECRET'), os.getenv('OPENAI_API_KEY')]):
+    raise ValueError("Environment variables CHANNEL_ACCESS_TOKEN, CHANNEL_SECRET, and OPENAI_API_KEY must be set.")
+    
+@app.route("/health", methods=["GET"])
+def health_check():
+    return "Server is running!", 200
+
 
 
 @handler.add(MemberJoinedEvent)
@@ -77,6 +125,16 @@ def welcome(event):
     name = profile.display_name
     message = TextSendMessage(text=f'{name}歡迎加入')
     line_bot_api.reply_message(event.reply_token, message)
+
+@lru_cache(maxsize=100)
+def GPT_cached_response(text):
+    return GPT_response(text)
+
+# In `handle_message`:
+GPT_answer = GPT_cached_response(msg)
+
+
+
         
         
 import os
